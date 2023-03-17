@@ -1,5 +1,6 @@
 from rdkit import Chem
 from rdkit.Chem.MolStandardize import rdMolStandardize
+from meeko import PDBQTMolecule
 import numpy as np
 import zlib
 import re
@@ -117,28 +118,38 @@ def write_to_log(log_path, smiles, target, scores, pdbqt_path=None):
 
     if not os.path.isfile(log_path):
         with open(os.path.join(log_path), 'w') as f:
-            header = '\t'.join(['smiles', 'target', 'scores', 'pdbqt'])
+            header = '\t'.join(['smiles', 'target', 'score', 'molfile'])
             f.write(header + '\n')
 
     if pdbqt_path is not None:
         with open(pdbqt_path, 'r') as f:
             pdbqt = f.read()
-        pdbqt = compress_string(pdbqt)
+
+        pdbqt_mol = PDBQTMolecule(pdbqt, skip_typing=True)
     else:
-        pdbqt = ''
+        pdbqt_mol = None
     
     if not isinstance(scores, list):
         scores = [scores]
     
     z = [str(score) for score in  scores]
-    if len(z) == 1:
-        scores = z[0]
-    else:
-        scores = ';'.join(z)
 
     with open(log_path, 'a') as f:
-        f.write('\t'.join([smiles, target, scores, pdbqt])+'\n')
-    
+        for i, score in enumerate(z):
+            if pdbqt_mol:
+                rdkit_mol = pdbqt_mol[i].export_rdkit_mol()
+                pose_block = Chem.MolToMolBlock(rdkit_mol)
+
+                # Replace header with Smiles_target_VINA_poserank
+                index = pose_block.find('3D') + 2
+                title = smiles + f'_{target}_VINA_{i + 1}\n'
+                pose_block = title + pose_block[index:]
+                pose_block = compress_string(pose_block)
+            else:
+                pose_block = ''
+
+            f.write('\t'.join([smiles, target, score, pose_block])+'\n')
+
 
 def read_log(log_path):
     """
@@ -152,8 +163,8 @@ def read_log(log_path):
     with open(log_path, 'r') as f:
         lines = f.readlines()[1:]
         for line in lines:
-            smiles, target, scores, pdbqt = line.strip().split('\t')
-            scores = [float(score) for score in scores.split(';')]
-            pdbqt = decompress_string(pdbqt)
-            log += [(smiles, target, scores, pdbqt)]
+            smiles, target, score, molfile = line.strip().split('\t')
+            score = float(score)
+            molfile = decompress_string(molfile)
+            log += [(smiles, target, score, molfile)]
     return log
